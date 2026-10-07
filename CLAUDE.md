@@ -41,7 +41,9 @@ the key secrets are missing. v1.0.0 and v1.1.0 were signed with throwaway keys a
 first release signed with this key (2026-10-08).
 
 A plain `--release` makes a 48 MB "fat" APK carrying
-the Flutter engine for three ABIs; only one is ever used. Flutter already runs R8 on release builds.
+the Flutter engine for three ABIs; only one is ever used. The release workflow builds with
+`--target-platform android-arm64` (~18 MB, versionCode unchanged; `--split-per-abi` would add an ABI offset to it),
+so published APKs don't install on x86_64 emulators. Flutter already runs R8 on release builds.
 
 Emulator: AVD `Medium_Phone_API_36.0` (x86_64). Start it with `$LOCALAPPDATA/Android/Sdk/emulator/emulator.exe -avd Medium_Phone_API_36.0`.
 adb lives at `$LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe`.

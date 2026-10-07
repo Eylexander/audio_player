@@ -20,7 +20,7 @@ Requires Android 10 or newer. The app only asks for access to your music library
 ## Build
 
 ```sh
-flutter build apk --release
+flutter build apk --release --target-platform android-arm64
 # -> build/app/outputs/flutter-apk/app-release.apk
 ```
 

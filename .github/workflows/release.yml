@@ -49,15 +49,17 @@ jobs:
       - run: flutter analyze
       - run: flutter test
 
+      # arm64 only (~18 MB): a plain --release APK carries the engine for three ABIs (~48 MB), and
+      # --split-per-abi would change the versionCode per ABI.
       - name: Build APK
         run: |
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            flutter build apk --release --build-name "${GITHUB_REF_NAME#v}" --build-number "$GITHUB_RUN_NUMBER"
+            flutter build apk --release --target-platform android-arm64 --build-name "${GITHUB_REF_NAME#v}" --build-number "$GITHUB_RUN_NUMBER"
           else
-            flutter build apk --release --build-number "$GITHUB_RUN_NUMBER"
+            flutter build apk --release --target-platform android-arm64 --build-number "$GITHUB_RUN_NUMBER"
           fi
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk "dist/audio-cutter-${GITHUB_REF_NAME//\//-}.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/audio-cutter-${GITHUB_REF_NAME//\//-}-arm64.apk"
 
       - uses: actions/upload-artifact@v4
         with:
