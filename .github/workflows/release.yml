@@ -27,19 +27,22 @@ jobs:
           channel: stable
           cache: true
 
-      # The release build is signed with the debug key (see android/app/build.gradle.kts).
-      # Restoring the same debug.keystore as on the dev machine keeps the signature identical,
-      # so the APK installs over the existing app and keeps its data. Without the secret, the
-      # runner generates a fresh key and the APK has to replace (uninstall) the existing app.
+      # Every published APK must be signed with the same release key (.secrets/release.p12 on the
+      # dev PC), or phones refuse the update. A tag build fails rather than publish with another key.
       - name: Restore signing key
         env:
-          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASS: ${{ secrets.RELEASE_KEYSTORE_PASS }}
         run: |
-          if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
-            mkdir -p ~/.android
-            echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$RELEASE_KEYSTORE_PASS" ]; then
+            echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
+            echo "RELEASE_KEYSTORE=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
+            echo "RELEASE_KEYSTORE_PASS=$RELEASE_KEYSTORE_PASS" >> "$GITHUB_ENV"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "::error::RELEASE_KEYSTORE_BASE64 / RELEASE_KEYSTORE_PASS are not set."
+            exit 1
           else
-            echo "::warning::DEBUG_KEYSTORE_BASE64 is not set; the APK is signed with a throwaway key."
+            echo "::warning::Release key secrets not set; the APK is signed with a throwaway debug key."
           fi
 
       - run: flutter pub get

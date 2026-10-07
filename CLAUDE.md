@@ -29,7 +29,11 @@ flutter build apk --debug         # build/app/outputs/flutter-apk/app-debug.apk
 flutter build apk --release --split-per-abi   # one APK per ABI; the phone needs app-arm64-v8a-release.apk (~18 MB)
 ```
 
-Release is signed with the debug key so it installs directly. A plain `--release` makes a 48 MB "fat" APK carrying
+Release is signed with the release key in `.secrets/` (git-ignored: `release.p12`, `password.txt`, `release.p12.b64`,
+`fingerprint.txt`; SHA-256 `db171ead795079f5e07d32cdc553f7eae42e60f4b29d0385c423eb6937837199`). CI gets it from the
+`RELEASE_KEYSTORE_BASE64` / `RELEASE_KEYSTORE_PASS` secrets. **Never regenerate or lose it**: phones only accept
+updates signed with the same key (the app is distributed through the F-Droid repo in `../fdroid`). Without the key,
+release builds fall back to the debug key. A plain `--release` makes a 48 MB "fat" APK carrying
 the Flutter engine for three ABIs; only one is ever used. Flutter already runs R8 on release builds.
 
 Emulator: AVD `Medium_Phone_API_36.0` (x86_64). Start it with `$LOCALAPPDATA/Android/Sdk/emulator/emulator.exe -avd Medium_Phone_API_36.0`.
@@ -213,7 +217,7 @@ Verified on the API 36 emulator:
 - `logcat -c` doesn't clear `am_anr` entries; use `logcat -b all -c`, and `dumpsys dropbox --print data_app_anr`
   for ANR stack traces.
 - On a fresh emulator boot, the debug build takes ~10 s before its first frame. Wait before tapping.
-- Debug and release are signed with the same key, so `adb install -r` switches between them and keeps app data.
+- Debug and release are signed with different keys, so switching between them needs an uninstall (loses app data).
   `run-as` (to read `files/playlists.json`) only works with the debug build.
 
 ## 2026-10-07 (evening)

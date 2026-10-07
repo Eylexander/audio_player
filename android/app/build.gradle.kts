@@ -28,10 +28,29 @@ android {
         versionName = flutter.versionName
     }
 
+    // Release key: .secrets/release.p12 + .secrets/password.txt (git-ignored, on the dev PC), or the
+    // RELEASE_KEYSTORE / RELEASE_KEYSTORE_PASS env vars in CI. Every published APK must use this key,
+    // or phones refuse the update. Without it, release builds fall back to the debug key.
+    val secrets = rootProject.file("../.secrets")
+    val releaseKeystore = System.getenv("RELEASE_KEYSTORE")?.let(::file) ?: secrets.resolve("release.p12")
+    val releasePassword = System.getenv("RELEASE_KEYSTORE_PASS")
+        ?: secrets.resolve("password.txt").takeIf { it.exists() }?.readText()?.trim()
+
+    signingConfigs {
+        if (releaseKeystore.exists() && releasePassword != null) {
+            create("release") {
+                storeFile = releaseKeystore
+                storeType = "PKCS12"
+                storePassword = releasePassword
+                keyAlias = "release"
+                keyPassword = releasePassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // Personal-use app: signed with the debug key so the release APK installs directly.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 }
