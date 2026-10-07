@@ -56,7 +56,14 @@ class PlaylistsTab extends StatelessWidget {
           subtitle: playlists == null || playlists.isEmpty
               ? null
               : '${playlists.length} ${playlists.length == 1 ? 'playlist' : 'playlists'} · ${songCount(songs)}',
-          actions: homeActions(context),
+          actions: [
+            IconButton(
+              tooltip: Settings.instance.playlistGrid ? 'Show as a list' : 'Show as covers',
+              onPressed: () => Settings.instance.setPlaylistGrid(!Settings.instance.playlistGrid),
+              icon: Icon(Settings.instance.playlistGrid ? Icons.view_list_rounded : Icons.grid_view_rounded),
+            ),
+            ...homeActions(context),
+          ],
           slivers: [
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),

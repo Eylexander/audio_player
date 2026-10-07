@@ -66,7 +66,27 @@ class LibraryController extends ChangeNotifier {
     return deleted;
   }
 
-  void _setTracks(List<Track> all) {
+  /// Where playlist folders live. Their copies are hidden while the original is still elsewhere.
+  static const playlistsPath = 'Music/Playlists/';
+
+  void _setTracks(List<Track> found) {
+    // The same file (name and size) in several places: keep those outside the playlist folders,
+    // or a single one if they're all in playlist folders.
+    final byFile = <String, List<Track>>{};
+    for (final t in found) {
+      byFile.putIfAbsent('${t.displayName}|${t.sizeBytes}', () => []).add(t);
+    }
+    bool inPlaylistFolder(Track t) => '${t.folder}/'.startsWith(playlistsPath);
+    final all = [
+      for (final same in byFile.values)
+        if (same.length == 1)
+          same.first
+        else if (same.any((t) => !inPlaylistFolder(t)))
+          ...same.where((t) => !inPlaylistFolder(t))
+        else
+          same.first,
+    ];
+
     tracks = [...all]..sort((a, b) => _compareText(a.title, b.title));
 
     final byFolder = <String, List<Track>>{};

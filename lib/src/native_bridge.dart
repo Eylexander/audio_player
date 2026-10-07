@@ -267,7 +267,24 @@ class NativeBridge {
   static Future<bool> requestLibraryPermission() async =>
       await _methods.invokeMethod<bool>('requestLibraryPermission') ?? false;
 
+  /// Whether the app has "Media management" access (moves files without asking each time). Null
+  /// on Android 10 and 11, which don't have it.
+  static Future<bool?> canManageMedia() => _methods.invokeMethod<bool>('canManageMedia');
+
+  /// Opens the system screen granting "Media management". Returns whether it's granted afterwards.
+  static Future<bool> requestManageMedia() async => await _methods.invokeMethod<bool>('requestManageMedia') ?? false;
+
   static Future<void> openAppSettings() => _methods.invokeMethod('openAppSettings');
+
+  /// The installed version name (from the release tag) and build number.
+  static Future<({String name, int code})> appInfo() async {
+    final map = await _methods.invokeMapMethod<String, Object?>('appInfo') ?? const {};
+    return (name: map['versionName'] as String? ?? '?', code: (map['versionCode'] as num?)?.toInt() ?? 0);
+  }
+
+  /// Opens [url] in the browser. False when no app can open it.
+  static Future<bool> openUrl(String url) async =>
+      await _methods.invokeMethod<bool>('openUrl', {'url': url}) ?? false;
 
   static Future<List<Track>> listTracks() => _tracks('listTracks');
 
@@ -293,9 +310,15 @@ class NativeBridge {
   static Future<int> copyToFolder(List<String> uris, String folder) async =>
       await _methods.invokeMethod<int>('copyToFolder', {'uris': uris, 'folder': folder}) ?? 0;
 
-  /// Moves the app's own files from one folder to another.
-  static Future<void> renameFolder(String from, String to) =>
-      _methods.invokeMethod('renameFolder', {'from': from, 'to': to});
+  /// Moves songs into a folder. Android asks the user first for the files the app didn't create.
+  /// Returns how many moved, or -1 if the user declined.
+  static Future<int> moveToFolder(List<String> uris, String folder) async =>
+      await _methods.invokeMethod<int>('moveToFolder', {'uris': uris, 'folder': folder}) ?? 0;
+
+  /// Moves a folder's files to another folder. Songs the user moved there need their permission
+  /// again; the app's own copies always move.
+  static Future<int> renameFolder(String from, String to) async =>
+      await _methods.invokeMethod<int>('renameFolder', {'from': from, 'to': to}) ?? 0;
 
   /// Deletes a file the app created in [folder]. Returns false if it wasn't there or isn't the app's.
   static Future<bool> deleteFromFolder(String folder, String name) async =>

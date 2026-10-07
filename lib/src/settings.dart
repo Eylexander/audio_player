@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
 import 'native_bridge.dart';
+import 'player/mini_player.dart';
 import 'theme.dart';
+import 'ui/common.dart';
+import 'ui/header_scroll_view.dart';
 
 /// The user's preferences, saved natively (SharedPreferences).
 class Settings extends ChangeNotifier {
@@ -17,8 +20,8 @@ class Settings extends ChangeNotifier {
   /// Playlists as a grid of covers (true) or a list.
   bool playlistGrid = true;
 
-  /// Each playlist gets a folder (Music/Playlists/(name)) holding copies of its songs.
-  bool playlistFolders = true;
+  /// The user was already offered "Media management" before a move ([offerManageMedia]).
+  bool offeredManageMedia = false;
 
   /// Called before the first frame, so a saved dark theme doesn't start out light.
   Future<void> load() async {
@@ -27,7 +30,7 @@ class Settings extends ChangeNotifier {
       themeMode = ThemeMode.values.asNameMap()[prefs['theme']] ?? ThemeMode.system;
       pureBlack = prefs['pureBlack'] == 'true';
       playlistGrid = prefs['playlistView'] != 'list';
-      playlistFolders = prefs['playlistFolders'] != 'false';
+      offeredManageMedia = prefs['offeredManageMedia'] == 'true';
     } catch (_) {
       // Keep the defaults.
     }
@@ -52,10 +55,10 @@ class Settings extends ChangeNotifier {
     _save('playlistView', value ? 'grid' : 'list');
   }
 
-  void setPlaylistFolders(bool value) {
-    if (value == playlistFolders) return;
-    playlistFolders = value;
-    _save('playlistFolders', '$value');
+  void setOfferedManageMedia() {
+    if (offeredManageMedia) return;
+    offeredManageMedia = true;
+    _save('offeredManageMedia', 'true');
   }
 
   void _save(String key, String value) {
@@ -64,92 +67,148 @@ class Settings extends ChangeNotifier {
   }
 }
 
-Future<void> showSettingsSheet(BuildContext context) => showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => const _SettingsSheet(),
-    );
+const sourceUrl = 'https://github.com/Eylexander/audio_player';
 
-class _SettingsSheet extends StatelessWidget {
-  const _SettingsSheet();
+Future<void> openSettings(BuildContext context) =>
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
+
+/// Theme, version and source. The playlist layout is switched from the Playlists tab itself.
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  late final Future<({String name, int code})> _version = NativeBridge.appInfo();
+  late Future<bool?> _manageMedia = NativeBridge.canManageMedia();
+
+  Future<void> _requestManageMedia() async {
+    // Asked again afterwards: the answer given right as the permission dialog closes can be stale.
+    final granted = NativeBridge.requestManageMedia().then((_) => NativeBridge.canManageMedia());
+    setState(() => _manageMedia = granted);
+  }
+
+  Future<void> _openSource() async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (!await NativeBridge.openUrl(sourceUrl)) showSnack(messenger, 'No browser to open $sourceUrl');
+  }
 
   @override
   Widget build(BuildContext context) {
     final settings = Settings.instance;
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    return ListenableBuilder(
-      listenable: settings,
-      builder: (context, _) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Settings', style: theme.textTheme.headlineSmall),
-              const SizedBox(height: 20),
-              Text('Theme', style: theme.textTheme.titleSmall?.copyWith(color: colors.primary)),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  for (final (i, mode) in ThemeMode.values.indexed) ...[
-                    if (i > 0) const SizedBox(width: 12),
-                    Expanded(
-                      child: _ThemeChoice(
-                        mode: mode,
-                        black: settings.pureBlack,
-                        selected: settings.themeMode == mode,
-                        onTap: () => settings.setThemeMode(mode),
+    return Scaffold(
+      extendBody: true,
+      body: ListenableBuilder(
+        listenable: settings,
+        builder: (context, _) => HeaderScrollView(
+          title: 'Settings',
+          slivers: [
+            const SliverToBoxAdapter(child: SectionLabel('Theme')),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+              sliver: SliverToBoxAdapter(
+                child: Row(
+                  children: [
+                    for (final (i, mode) in ThemeMode.values.indexed) ...[
+                      if (i > 0) const SizedBox(width: 12),
+                      Expanded(
+                        child: _ThemeChoice(
+                          mode: mode,
+                          black: settings.pureBlack,
+                          selected: settings.themeMode == mode,
+                          onTap: () => settings.setThemeMode(mode),
+                        ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
-              const SizedBox(height: 8),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
+            ),
+            SliverToBoxAdapter(
+              child: SwitchListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20),
                 title: const Text('Pure black'),
                 subtitle: const Text('Black backgrounds in the dark theme. Easier on OLED screens and batteries.'),
                 value: settings.pureBlack,
                 onChanged: settings.themeMode == ThemeMode.light ? null : settings.setPureBlack,
               ),
-              const SizedBox(height: 12),
-              Text('Playlists', style: theme.textTheme.titleSmall?.copyWith(color: colors.primary)),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: true, icon: Icon(Icons.grid_view_rounded), label: Text('Covers')),
-                    ButtonSegment(value: false, icon: Icon(Icons.view_list_rounded), label: Text('List')),
-                  ],
-                  selected: {settings.playlistGrid},
-                  onSelectionChanged: (value) => settings.setPlaylistGrid(value.first),
+            ),
+            SliverToBoxAdapter(
+              child: FutureBuilder(
+                future: _manageMedia,
+                builder: (context, snapshot) {
+                  // Android 10 and 11 don't have this access.
+                  if (!snapshot.hasData) return const SizedBox.shrink();
+                  final granted = snapshot.data!;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SectionLabel('Files'),
+                      ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                        leading: Icon(granted ? Icons.folder_special_rounded : Icons.folder_outlined),
+                        title: const Text('Move songs without asking'),
+                        subtitle: Text(
+                          granted
+                              ? 'On. Playlists move songs into their folders without a confirmation for each file.'
+                              : 'Android asks before each move into a playlist folder. Allow “Media management” '
+                                  'to skip that (Android also asks about “photos and videos”: choose “Allow all”).',
+                        ),
+                        trailing: const Icon(Icons.open_in_new_rounded, size: 20),
+                        onTap: _requestManageMedia,
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+            const SliverToBoxAdapter(child: SectionLabel('About')),
+            SliverToBoxAdapter(
+              child: FutureBuilder(
+                future: _version,
+                builder: (context, snapshot) {
+                  final version = snapshot.data;
+                  return ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                    leading: const Icon(Icons.info_outline_rounded),
+                    title: const Text('Version'),
+                    subtitle: Text(switch ((version, snapshot.hasError)) {
+                      (_, true) => 'Unknown',
+                      (null, _) => '…',
+                      (final v?, _) => '${v.name} (build ${v.code})',
+                    }),
+                  );
+                },
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                leading: const Icon(Icons.code_rounded),
+                title: const Text('Source code'),
+                subtitle: Text(sourceUrl.replaceFirst('https://', '')),
+                trailing: const Icon(Icons.open_in_new_rounded, size: 20),
+                onTap: _openSource,
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+              sliver: SliverToBoxAdapter(
+                child: Text(
+                  'Cuts never lose quality: the audio is copied as it is, or stored as lossless FLAC. '
+                  'Saved to Music/AudioCutter.',
+                  style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
                 ),
               ),
-              const SizedBox(height: 8),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('A folder for each playlist'),
-                subtitle: const Text('Copies a playlist’s songs into Music/Playlists/<name>, so they’re organized '
-                    'by folder too. The copies take extra space.'),
-                value: settings.playlistFolders,
-                onChanged: settings.setPlaylistFolders,
-              ),
-              const SizedBox(height: 20),
-              const Divider(),
-              const SizedBox(height: 16),
-              Text('Audio Cutter', style: theme.textTheme.titleSmall),
-              const SizedBox(height: 4),
-              Text(
-                'Cuts never lose quality: the audio is copied as it is, or stored as lossless FLAC. '
-                'Saved to Music/AudioCutter.',
-                style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
+      bottomNavigationBar: const MiniPlayer(),
     );
   }
 }

@@ -6,6 +6,7 @@ import '../artwork.dart';
 import '../formatting.dart';
 import '../native_bridge.dart';
 import '../player/player_controller.dart';
+import '../settings.dart';
 import '../ui/common.dart';
 import '../ui/generated_cover.dart';
 import 'playlist_store.dart';
@@ -41,6 +42,70 @@ Future<String?> showPlaylistNameDialog(BuildContext context, {String title = 'Ne
   );
 }
 
+/// Before the first move, offers "Media management" (Android 12+), which lets moves happen without a
+/// confirmation for each file. Asked once; it can be changed later in Settings.
+Future<void> offerManageMedia(BuildContext context) async {
+  final settings = Settings.instance;
+  if (settings.offeredManageMedia || await NativeBridge.canManageMedia() != false || !context.mounted) return;
+  settings.setOfferedManageMedia();
+  final allow = await showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    builder: (sheet) {
+      final theme = Theme.of(sheet);
+      final colors = theme.colorScheme;
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.folder_special_rounded, size: 36, color: colors.primary),
+              const SizedBox(height: 12),
+              Text('Move songs without asking?', style: theme.textTheme.titleLarge),
+              const SizedBox(height: 8),
+              Text(
+                'Android confirms every move of a song another app downloaded. Turn on “Media management” for '
+                'Audio Cutter once, and songs go into playlist folders without asking, including songs you add '
+                'later.\n\nAndroid then asks about “photos and videos”: that’s how it labels the last permission '
+                'moves need. Choose “Allow all”. Audio Cutter has no access to your photos.\n\n'
+                'You can change it any time in Settings.',
+                style: theme.textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(onPressed: () => Navigator.pop(sheet, false), child: const Text('Not now')),
+                  const SizedBox(width: 8),
+                  FilledButton(onPressed: () => Navigator.pop(sheet, true), child: const Text('Open settings')),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+  if (allow == true) await NativeBridge.requestManageMedia();
+}
+
+/// Tells the user songs were added, once they're also moved when the playlist keeps its songs in
+/// its folder (Android may ask for permission first). [inName] adds the playlist's name.
+Future<void> reportAdded(ScaffoldMessengerState messenger, Playlist playlist, AddResult result, {bool inName = false}) async {
+  final added = 'Added ${songCount(result.added)}${inName ? ' to “${playlist.name}”' : ''}';
+  final moving = result.moved;
+  if (moving == null) return showSnack(messenger, added);
+  final moved = await moving.catchError((_) => 0);
+  showSnack(messenger, switch (moved) {
+    -1 => '$added. They stay in their folders: Android’s permission was declined',
+    0 => added,
+    _ when moved < result.added => '$added, moved ${songCount(moved)} to ${playlist.folder}',
+    _ => '$added and moved to ${playlist.folder}',
+  });
+}
+
 /// Bottom sheet to put [tracks] into an existing or a new playlist.
 Future<void> showAddToPlaylistSheet(BuildContext context, List<Track> tracks) async {
   final store = PlaylistStore.instance;
@@ -48,8 +113,12 @@ Future<void> showAddToPlaylistSheet(BuildContext context, List<Track> tracks) as
   if (!context.mounted) return;
   final messenger = ScaffoldMessenger.of(context);
 
-  void added(Playlist playlist, int count) {
-    showSnack(messenger, count == 0 ? 'Already in “${playlist.name}”' : 'Added ${songCount(count)} to “${playlist.name}”');
+  void added(Playlist playlist, AddResult result) {
+    if (result.added == 0) {
+      showSnack(messenger, 'Already in “${playlist.name}”');
+    } else {
+      reportAdded(messenger, playlist, result, inName: true);
+    }
   }
 
   await showModalBottomSheet<void>(

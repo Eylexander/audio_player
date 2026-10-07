@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.WindowManager
@@ -33,6 +34,8 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -120,6 +123,19 @@ class MediaBridge(
         mainHandler.post { sink?.success(event) }
     }
 
+    /**
+     * "Media management" as far as moves go: the special access, plus ACCESS_MEDIA_LOCATION, without
+     * which Android still confirms every write. Null on Android 10 and 11, which don't have it.
+     */
+    private fun canManageMedia(): Boolean? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaStore.canManageMedia(context) && hasMediaLocation() else null
+
+    private fun hasMediaLocation(): Boolean = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_MEDIA_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED
+
+    private fun requestMediaLocation(callback: (Boolean) -> Unit) =
+        activity.requestPermission(Manifest.permission.ACCESS_MEDIA_LOCATION, callback)
+
     private fun hasLibraryPermission(): Boolean = ContextCompat.checkSelfPermission(context, libraryPermission) ==
         PackageManager.PERMISSION_GRANTED
 
@@ -203,6 +219,39 @@ class MediaBridge(
                 else activity.requestPermission(libraryPermission) { granted -> result.success(granted) }
             }
 
+            // Null where "Media management" doesn't exist (Android 10 and 11).
+            "canManageMedia" -> result.success(canManageMedia())
+            "requestManageMedia" -> when {
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.S -> result.success(false)
+                // Granted in settings, but the location half is missing: ask for it only.
+                MediaStore.canManageMedia(context) && !hasMediaLocation() ->
+                    requestMediaLocation { result.success(canManageMedia() == true) }
+                else -> activity.openAndWait(
+                    Intent(Settings.ACTION_REQUEST_MANAGE_MEDIA, Uri.fromParts("package", context.packageName, null))
+                ) {
+                    if (MediaStore.canManageMedia(context) && !hasMediaLocation()) {
+                        requestMediaLocation { result.success(canManageMedia() == true) }
+                    } else {
+                        result.success(canManageMedia() == true)
+                    }
+                }
+            }
+
+            "appInfo" -> {
+                val info = context.packageManager.getPackageInfo(context.packageName, 0)
+                val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
+                result.success(mapOf("versionName" to info.versionName, "versionCode" to code))
+            }
+
+            "openUrl" -> result.success(
+                try {
+                    activity.startActivity(Intent(Intent.ACTION_VIEW, call.argument<String>("url")!!.toUri()))
+                    true
+                } catch (_: android.content.ActivityNotFoundException) {
+                    false
+                }
+            )
+
             "openAppSettings" -> {
                 activity.startActivity(
                     Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
@@ -220,7 +269,7 @@ class MediaBridge(
                 try {
                     val sender = withContext(Dispatchers.IO) { library.delete(call.argument<String>("uri")!!.toUri()) }
                     if (sender == null) result.success(true)
-                    else activity.requestDeleteConfirmation(sender) { deleted -> result.success(deleted) }
+                    else activity.requestConsent(sender) { deleted -> result.success(deleted) }
                 } catch (e: Exception) {
                     result.error("delete_failed", e.message, null)
                 }
@@ -251,10 +300,9 @@ class MediaBridge(
             "copyToFolder" -> io(result) {
                 library.copyToFolder(call.argument<List<String>>("uris")!!.map { it.toUri() }, call.argument<String>("folder")!!)
             }
-            "renameFolder" -> io(result) {
-                library.renameFolder(call.argument<String>("from")!!, call.argument<String>("to")!!)
-                null
-            }
+            "moveToFolder" -> moveToFolder(call.argument<List<String>>("uris")!!.map { it.toUri() }, call.argument<String>("folder")!!, result)
+            // The app's copies always move. Songs the user moved there need write access again.
+            "renameFolder" -> moveToFolder(null, call.argument<String>("to")!!, result, from = call.argument<String>("from")!!)
             "deleteFromFolder" -> io(result) {
                 library.deleteFromFolder(call.argument<String>("folder")!!, call.argument<String>("name")!!)
             }
@@ -350,6 +398,35 @@ class MediaBridge(
     }
 
     /** Runs [block] off the main thread and replies with its value. */
+    /**
+     * Moves files ([uris], or everything in the folder [from]) into [folder], asking the user first
+     * for write access to the files that aren't this app's. Returns how many files moved, or -1 if
+     * the user declined. When renaming ([from] set), a refusal still moves the app's own copies.
+     */
+    private fun moveToFolder(uris: List<Uri>?, folder: String, result: MethodChannel.Result, from: String? = null) {
+        scope.launch {
+            try {
+                val files = uris ?: withContext(Dispatchers.IO) { library.filesIn(from!!) }
+                val request = withContext(Dispatchers.IO) { library.writeRequest(files) }
+                // Media management granted before the location permission was part of it: complete it,
+                // or Android shows its confirmation anyway.
+                if (request != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                    MediaStore.canManageMedia(context) && !hasMediaLocation()
+                ) {
+                    suspendCoroutine { cont -> requestMediaLocation { cont.resume(it) } }
+                }
+                val granted = request == null || suspendCoroutine { cont -> activity.requestConsent(request) { cont.resume(it) } }
+                if (!granted && from == null) {
+                    result.success(-1)
+                    return@launch
+                }
+                result.success(withContext(Dispatchers.IO) { library.moveToFolder(files, folder) })
+            } catch (e: Exception) {
+                result.error("move_failed", e.message, null)
+            }
+        }
+    }
+
     private fun io(result: MethodChannel.Result, errorCode: String = "failed", block: () -> Any?) {
         scope.launch {
             try {

@@ -26,8 +26,8 @@ List<Widget> homeActions(BuildContext context) => [
       ),
       IconButton(
         tooltip: 'Settings',
-        onPressed: () => showSettingsSheet(context),
-        icon: const Icon(Icons.tune_rounded),
+        onPressed: () => openSettings(context),
+        icon: const Icon(Icons.settings_outlined),
       ),
     ];
 

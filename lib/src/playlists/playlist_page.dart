@@ -9,7 +9,6 @@ import '../native_bridge.dart';
 import '../player/mini_player.dart';
 import '../player/player_controller.dart';
 import '../player/track_colors.dart';
-import '../settings.dart';
 import '../ui/common.dart';
 import '../ui/generated_cover.dart';
 import '../ui/header_scroll_view.dart';
@@ -20,7 +19,9 @@ void openPlaylist(BuildContext context, Playlist playlist) {
   Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => PlaylistPage(playlist: playlist)));
 }
 
-enum _PageAction { rename, cover, copyToFolder, removeMissing, delete }
+enum _PageAction { rename, cover, folder, removeMissing, delete }
+
+enum _FolderChoice { copy, move, stopMoving }
 
 /// One playlist: play, shuffle, add, remove and reorder songs. The page takes on the colors of
 /// its first song's cover.
@@ -36,20 +37,100 @@ class PlaylistPage extends StatelessWidget {
       MaterialPageRoute(builder: (_) => TrackPickerPage(playlist: playlist)),
     );
     if (picked == null || picked.isEmpty || !context.mounted) return;
-    final added = PlaylistStore.instance.addTracks(playlist, picked);
-    showSnack(ScaffoldMessenger.of(context), 'Added ${songCount(added)}');
+    final result = PlaylistStore.instance.addTracks(playlist, picked);
+    await reportAdded(ScaffoldMessenger.of(context), playlist, result);
   }
 
-  Future<void> _copyToFolder(BuildContext context) async {
+  /// Asks whether to copy or move the songs into the playlist's folder, then does it.
+  Future<void> _putInFolder(BuildContext context) async {
+    final store = PlaylistStore.instance;
     final messenger = ScaffoldMessenger.of(context);
+    final folder = playlist.folder ?? 'Music/Playlists/${playlist.name}';
+    final count = store.outsideFolder(playlist).length;
+    if (count == 0 && !playlist.moveSongs) {
+      showSnack(messenger, 'Every song is already in $folder');
+      return;
+    }
+    final choice = await showModalBottomSheet<_FolderChoice>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheet) {
+        final theme = Theme.of(sheet);
+        final colors = theme.colorScheme;
+        Widget choice(IconData icon, String title, String subtitle, _FolderChoice value) => ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+              leading: Icon(icon),
+              title: Text(title),
+              subtitle: Text(subtitle),
+              onTap: () => Navigator.pop(sheet, value),
+            );
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        count == 0 ? 'Every song is in its folder' : 'Put ${songCount(count)} in a folder',
+                        style: theme.textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(folder, style: theme.textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+                const Divider(indent: 24, endIndent: 24),
+                if (count > 0) ...[
+                  choice(Icons.copy_rounded, 'Copy', 'The songs stay where they are too. Takes extra space.', _FolderChoice.copy),
+                  choice(
+                    Icons.drive_file_move_outline,
+                    'Move',
+                    'The songs leave their current folders, and songs you add later follow. '
+                        'Android asks for your permission.',
+                    _FolderChoice.move,
+                  ),
+                ],
+                if (playlist.moveSongs)
+                  choice(
+                    Icons.do_not_disturb_on_outlined,
+                    'Stop moving new songs',
+                    'Songs you add later stay where they are. Nothing already moved changes.',
+                    _FolderChoice.stopMoving,
+                  ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (choice == null) return;
+    if (choice == _FolderChoice.stopMoving) {
+      store.setMoveSongs(playlist, false);
+      showSnack(messenger, 'Songs you add will stay where they are');
+      return;
+    }
+    final move = choice == _FolderChoice.move;
+    if (move && context.mounted) await offerManageMedia(context);
     try {
-      final copied = await PlaylistStore.instance.syncFolder(playlist, force: true);
+      final done = await store.fillFolder(playlist, move: move);
+      if (move && done != -1) store.setMoveSongs(playlist, true);
       showSnack(
         messenger,
-        copied == 0 ? 'Every song is already in ${playlist.folder}' : 'Copied ${songCount(copied)} to ${playlist.folder}',
+        switch (done) {
+          -1 => 'Nothing was moved',
+          0 => move ? "Couldn't move the songs" : 'Every song is already in $folder',
+          _ when done < count => '${move ? 'Moved' : 'Copied'} ${songCount(done)} of $count to $folder',
+          _ => '${move ? 'Moved' : 'Copied'} ${songCount(done)} to $folder',
+        },
       );
     } catch (_) {
-      showSnack(messenger, "Couldn't copy the songs.");
+      showSnack(messenger, move ? "Couldn't move the songs" : "Couldn't copy the songs");
     }
   }
 
@@ -107,8 +188,8 @@ class PlaylistPage extends StatelessWidget {
                                 await renamePlaylist(context, playlist);
                               case _PageAction.cover:
                                 await showCoverPicker(context, playlist);
-                              case _PageAction.copyToFolder:
-                                await _copyToFolder(context);
+                              case _PageAction.folder:
+                                await _putInFolder(context);
                               case _PageAction.removeMissing:
                                 store.removeMissing(playlist);
                               case _PageAction.delete:
@@ -118,8 +199,8 @@ class PlaylistPage extends StatelessWidget {
                           itemBuilder: (context) => [
                             const PopupMenuItem(value: _PageAction.rename, child: Text('Rename')),
                             const PopupMenuItem(value: _PageAction.cover, child: Text('Change cover')),
-                            if (tracks.isNotEmpty && (Settings.instance.playlistFolders || playlist.folder != null))
-                              const PopupMenuItem(value: _PageAction.copyToFolder, child: Text('Copy songs to its folder')),
+                            if (tracks.isNotEmpty)
+                              const PopupMenuItem(value: _PageAction.folder, child: Text('Put songs in a folder…')),
                             if (resolved.missing > 0)
                               const PopupMenuItem(value: _PageAction.removeMissing, child: Text('Remove missing songs')),
                             const PopupMenuItem(value: _PageAction.delete, child: Text('Delete playlist')),

@@ -28,6 +28,7 @@ class AudioLibrary(context: Context) {
     }
 
     private val resolver = context.contentResolver
+    private val packageName = context.packageName
     private val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
 
     /**
@@ -155,16 +156,58 @@ class AudioLibrary(context: Context) {
         return copied
     }
 
-    /** Moves this app's files from the folder [from] to [to]. Files it doesn't own stay where they are. */
-    fun renameFolder(from: String, to: String) {
-        val moved = ContentValues().apply { put(MediaStore.Audio.Media.RELATIVE_PATH, "$to/") }
-        for (uri in filesIn(from)) {
+    /**
+     * A system request for write access to the files of [uris] this app didn't create, or null when
+     * there are none (or on Android 10, which has no such request: those files then stay put).
+     */
+    fun writeRequest(uris: List<Uri>): IntentSender? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val foreign = uris.filter { uri ->
+            resolver.query(uri, arrayOf(MediaStore.MediaColumns.OWNER_PACKAGE_NAME), null, null, null)
+                ?.use { it.moveToFirst() && it.getString(0) != packageName } ?: false
+        }
+        return if (foreign.isEmpty()) null else MediaStore.createWriteRequest(resolver, foreign).intentSender
+    }
+
+    /**
+     * Moves each of [uris] into the folder [relativePath]. A file keeps its MediaStore uri, so
+     * playlists keep pointing at it. A copy this app made there earlier (same name and size) is
+     * deleted first, so the folder doesn't end up with the song twice. Files the app may not write
+     * stay where they are. Returns how many files were moved.
+     */
+    fun moveToFolder(uris: List<Uri>, relativePath: String): Int {
+        val folder = "$relativePath/"
+        val present = mutableMapOf<String, Long>()
+        resolver.query(
+            collection,
+            arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.DISPLAY_NAME, MediaStore.Audio.Media.SIZE),
+            "${MediaStore.Audio.Media.RELATIVE_PATH} = ?",
+            arrayOf(folder),
+            null,
+        )?.use { c -> while (c.moveToNext()) present["${c.getString(1)}|${c.getLong(2)}"] = c.getLong(0) }
+
+        val moved = ContentValues().apply { put(MediaStore.Audio.Media.RELATIVE_PATH, folder) }
+        var count = 0
+        for (uri in uris) {
+            val (name, size) = resolver.query(uri, arrayOf(MediaStore.Audio.Media.DISPLAY_NAME, MediaStore.Audio.Media.SIZE), null, null, null)
+                ?.use { if (it.moveToFirst()) it.getString(0) to it.getLong(1) else null } ?: continue
+            val copy = present["$name|$size"]
+            if (copy == ContentUris.parseId(uri)) continue // Already there.
+            if (copy != null) {
+                val deleted = try {
+                    resolver.delete(ContentUris.withAppendedId(collection, copy), null, null) > 0
+                } catch (_: SecurityException) {
+                    false
+                }
+                if (!deleted) continue // Someone else's file with the same content: leave both alone.
+            }
             try {
-                resolver.update(uri, moved, null, null)
+                if (resolver.update(uri, moved, null, null) > 0) count++
             } catch (_: SecurityException) {
-                // Not ours (e.g. created before a reinstall): leave it.
+                // Not allowed (declined, or Android 10): it stays where it is.
             }
         }
+        return count
     }
 
     /** Deletes the file [displayName] from [relativePath] if this app owns it, without asking. */
@@ -176,7 +219,7 @@ class AudioLibrary(context: Context) {
         }
     }
 
-    private fun filesIn(relativePath: String, displayName: String? = null): List<Uri> {
+    fun filesIn(relativePath: String, displayName: String? = null): List<Uri> {
         val selection = "${MediaStore.Audio.Media.RELATIVE_PATH} = ?" +
             if (displayName != null) " AND ${MediaStore.Audio.Media.DISPLAY_NAME} = ?" else ""
         val args = listOfNotNull("$relativePath/", displayName).toTypedArray()

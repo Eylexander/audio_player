@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import '../formatting.dart';
 import '../library/library_controller.dart';
 import '../native_bridge.dart';
-import '../settings.dart';
 
 /// A song in a playlist. Besides the MediaStore uri, the file name and size are kept so the
 /// song can be found again if the uri changes (file moved, media database rebuilt...).
@@ -31,7 +30,7 @@ class PlaylistEntry {
 }
 
 class Playlist {
-  Playlist({required this.id, required this.name, required this.entries, this.cover, this.folder});
+  Playlist({required this.id, required this.name, required this.entries, this.cover, this.folder, this.moveSongs = false});
 
   factory Playlist.fromJson(Map<String, Object?> json) => Playlist(
         id: json['id'] as String,
@@ -41,6 +40,7 @@ class Playlist {
         ],
         cover: json['cover'] as String?,
         folder: json['folder'] as String?,
+        moveSongs: json['moveSongs'] == true,
       );
 
   final String id;
@@ -50,9 +50,12 @@ class Playlist {
   /// A generated cover picked by the user ([CoverDesign.encode]), or null for the songs' covers.
   String? cover;
 
-  /// The folder holding copies of its songs, e.g. "Music/Playlists/Road trip". Null until the
-  /// first copy.
+  /// The folder holding its songs (copied or moved there), e.g. "Music/Playlists/Road trip". Null
+  /// until the user first puts songs in it.
   String? folder;
+
+  /// The user moved the songs into [folder]: songs added later are moved there too.
+  bool moveSongs;
 
   Map<String, Object?> toJson() => {
         'id': id,
@@ -60,8 +63,13 @@ class Playlist {
         'entries': [for (final e in entries) e.toJson()],
         if (cover != null) 'cover': cover,
         if (folder != null) 'folder': folder,
+        if (moveSongs) 'moveSongs': true,
       };
 }
+
+/// What [PlaylistStore.addTracks] did: how many songs were added, and, for a playlist that keeps
+/// its songs in its folder, the move of the new ones (see [PlaylistStore.fillFolder]).
+typedef AddResult = ({int added, Future<int>? moved});
 
 /// A playlist's songs as playable tracks. [entryIndexes] maps each track back to its entry.
 class ResolvedPlaylist {
@@ -165,21 +173,21 @@ class PlaylistStore extends ChangeNotifier {
   }
 
   /// Adds the tracks that aren't in the playlist yet (the same file in its folder counts as
-  /// already there). Returns how many were added.
-  int addTracks(Playlist playlist, List<Track> tracks) {
+  /// already there). When the playlist keeps its songs in its folder, the new ones are moved there.
+  AddResult addTracks(Playlist playlist, List<Track> tracks) {
     final present = {for (final e in playlist.entries) ...[e.uri, '${e.displayName}|${e.sizeBytes}']};
     var added = 0;
+    final newUris = <String>[];
     for (final t in tracks) {
       if (present.contains(t.uri) || present.contains('${t.displayName}|${t.sizeBytes}')) continue;
       present.addAll([t.uri, '${t.displayName}|${t.sizeBytes}']);
       playlist.entries.add(PlaylistEntry.fromTrack(t));
+      newUris.add(t.uri);
       added++;
     }
-    if (added > 0) {
-      _changed();
-      syncFolder(playlist);
-    }
-    return added;
+    if (added == 0) return (added: 0, moved: null);
+    _changed();
+    return (added: added, moved: playlist.moveSongs ? fillFolder(playlist, move: true, only: newUris.toSet()) : null);
   }
 
   void removeEntry(Playlist playlist, int entryIndex) {
@@ -218,24 +226,36 @@ class PlaylistStore extends ChangeNotifier {
     return folder;
   }
 
-  /// Copies the playlist's songs into its folder (when that setting is on). Returns how many
-  /// files were copied.
-  Future<int> syncFolder(Playlist playlist, {bool force = false}) {
-    if (!force && !Settings.instance.playlistFolders) return Future.value(0);
-    if (playlist.folder == null) {
-      playlist.folder = _folderFor(playlist);
-      _changed();
-    }
+  /// The playlist's songs that aren't in its folder yet (its future folder if it has none).
+  List<Track> outsideFolder(Playlist playlist) {
+    final folder = playlist.folder ?? _folderFor(playlist);
+    return [for (final t in resolve(playlist).tracks) if (t.folder != folder) t];
+  }
+
+  /// Puts the playlist's songs in its folder, Music/Playlists/(name): copies them, or moves them
+  /// when [move] is set. Only done when the user asks. Returns how many files were copied or
+  /// moved, or -1 if the user declined Android's permission request. [only] limits it to some songs.
+  Future<int> fillFolder(Playlist playlist, {required bool move, Set<String>? only}) {
     final done = _copying.then((_) async {
-      final folder = playlist.folder;
-      final uris = [for (final t in resolve(playlist).tracks) if (t.folder != folder) t.uri];
-      if (folder == null || uris.isEmpty) return 0;
-      final copied = await NativeBridge.copyToFolder(uris, folder);
-      await _reloadLibrary(copied);
-      return copied;
+      final folder = playlist.folder ?? _folderFor(playlist);
+      final uris = [for (final t in outsideFolder(playlist)) if (only == null || only.contains(t.uri)) t.uri];
+      if (uris.isEmpty) return 0;
+      final count = move ? await NativeBridge.moveToFolder(uris, folder) : await NativeBridge.copyToFolder(uris, folder);
+      if (count > 0 && playlist.folder == null) {
+        playlist.folder = folder;
+        _changed();
+      }
+      await _reloadLibrary(count > 0 ? count : 0);
+      return count;
     });
     _copying = done.catchError((_) => 0);
     return done;
+  }
+
+  /// Stops (or starts) moving new songs into the playlist's folder.
+  void setMoveSongs(Playlist playlist, bool value) {
+    playlist.moveSongs = value;
+    _changed();
   }
 
   void moveEntry(Playlist playlist, int from, int to) {

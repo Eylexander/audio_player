@@ -170,12 +170,38 @@ These rules come from the user's "always best quality" requirement:
   offers "Remove missing songs".
 - Duplicate songs are skipped when adding (by uri, and by `displayName|sizeBytes`, so a folder copy counts too).
 - Long-press the playlist page's title to rename; tap its cover to change it.
-- **Playlist folders** (setting "A folder for each playlist", on by default): adding songs copies them byte for byte
-  into `Music/Playlists/<name>/` (MediaStore insert, app-owned). Entries keep pointing at the originals; the copies
-  share name and size, so the `displayName|sizeBytes` fallback finds them if an original goes away. Renaming moves
-  the files (the old empty directory stays: MediaStore can't delete directories). Removing a song deletes its copy
-  only if the original still exists. Deleting a playlist keeps the folder. Older playlists get a folder through
-  "Copy songs to its folder" in the page menu.
+- **Playlist folders** (`Music/Playlists/<name>/`) are only filled when the user asks: page menu, "Put songs in a
+  folder…", then **Copy** or **Move**. There is no automatic copy anymore (the old "A folder for each playlist"
+  setting made duplicates). Pressing the button again only handles songs not in it yet.
+  - Choosing Move sets `moveSongs: true` on the playlist: songs added later (from any screen) are moved there
+    too, right after being added (`addTracks` returns `AddResult` with the pending move; `reportAdded` shows one
+    snack once it's done, or says the permission was declined). The same sheet offers "Stop moving new songs".
+    After Copy, new songs aren't copied.
+  - "Media management" (`MANAGE_MEDIA`, Android 12+): when the user holds it, `createWriteRequest` completes
+    without a dialog. Offered once, before the first Move (`offerManageMedia`, pref `offeredManageMedia`), and
+    always reachable from Settings → Files ("Move songs without asking", hidden on Android 10–11). The bridge's
+    `canManageMedia` returns null where it doesn't exist.
+  - **Media management alone isn't enough for moves**: MediaProvider's `PermissionActivity.shouldShowActionDialog`
+    also requires `ACCESS_MEDIA_LOCATION` for write requests (logcat: `MediaProvider: No permission
+    ACCESS_MEDIA_LOCATION`). It's declared and requested after the settings screen (and before a move if missing);
+    `canManageMedia` reports both. Android 14+ words its prompt as "access photos and videos" ("Allow all"
+    grants only `ACCESS_MEDIA_LOCATION`: the app declares no image/video permission), so the UI warns about it.
+    `READ_MEDIA_AUDIO` is enough as the read permission. Verified on the API 36 emulator: renaming a playlist
+    moved 4 files owned by `com.android.shell` with no dialog.
+  - Copy: byte for byte, MediaStore insert, app-owned. The copies share name and size with the originals, so the
+    `displayName|sizeBytes` fallback finds them if an original goes away.
+  - Move: updates `RELATIVE_PATH`, so the MediaStore uri (and the playlist entry) stays the same. Files the app
+    didn't create need `MediaStore.createWriteRequest` (one system dialog for all; `OWNER_PACKAGE_NAME` decides
+    which). Declined = nothing moved. Android 10 has no write request, so other apps' files stay put there. An
+    app-owned copy with the same name and size already in the folder is deleted first.
+  - Renaming moves the folder's files (asking again for moved originals; a refusal still moves the app's copies;
+    the old empty directory stays: MediaStore can't delete directories). Removing a song deletes its copy only if
+    the original still exists elsewhere. Deleting a playlist keeps the folder.
+  - The library hides a file under `Music/Playlists/` when the same name and size exists outside it, so copies
+    don't show twice in Folders and search (`LibraryController._setTracks`).
+  - Verified on the emulator (API 36): Move with the permission dialog (copies replaced, uris kept), then rename
+    (files followed without a second dialog, the earlier grant still held). Adding a song to a moved playlist: one dialog for
+    that file, then "Added 1 song and moved to Music/Playlists/Road trip". "Stop moving new songs" clears the flag.
 - M3U import (`importM3u`): lines are matched to library tracks by file name, preferring a track whose
   `folder/displayName` is a suffix of the line. This is meant for playlists exported from Fossify Music Player.
 - Songs can be added from: the song picker on the playlist page, any track's menu ("Add to playlist…"), the

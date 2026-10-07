@@ -12,7 +12,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     private var bridge: MediaBridge? = null
     private var pickCallback: ((Uri?) -> Unit)? = null
-    private var deleteCallback: ((Boolean) -> Unit)? = null
+    private var consentCallback: ((Boolean) -> Unit)? = null
 
     // Activity result launchers have to be registered before the activity starts.
     private val openDocument = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -20,9 +20,22 @@ class MainActivity : FlutterFragmentActivity() {
         pickCallback = null
     }
 
-    private val confirmDelete = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        deleteCallback?.invoke(result.resultCode == RESULT_OK)
-        deleteCallback = null
+    private val askConsent = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        consentCallback?.invoke(result.resultCode == RESULT_OK)
+        consentCallback = null
+    }
+
+    private var returnCallback: (() -> Unit)? = null
+    private val openForResult = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        returnCallback?.invoke()
+        returnCallback = null
+    }
+
+    /** Opens [intent] (e.g. a settings screen) and calls [callback] when the user comes back. */
+    fun openAndWait(intent: Intent, callback: () -> Unit) {
+        returnCallback?.invoke()
+        returnCallback = callback
+        openForResult.launch(intent)
     }
 
     private var permissionCallback: ((Boolean) -> Unit)? = null
@@ -43,10 +56,11 @@ class MainActivity : FlutterFragmentActivity() {
         openDocument.launch(mimeTypes)
     }
 
-    fun requestDeleteConfirmation(sender: IntentSender, callback: (Boolean) -> Unit) {
-        deleteCallback?.invoke(false)
-        deleteCallback = callback
-        confirmDelete.launch(IntentSenderRequest.Builder(sender).build())
+    /** Shows a system confirmation (delete or write access to files). The callback gets whether the user agreed. */
+    fun requestConsent(sender: IntentSender, callback: (Boolean) -> Unit) {
+        consentCallback?.invoke(false)
+        consentCallback = callback
+        askConsent.launch(IntentSenderRequest.Builder(sender).build())
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

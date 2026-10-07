@@ -3,6 +3,12 @@
     <!-- Read the music library (only needed for the player tabs: cutting works without it). -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- "Media management" (Android 12+, granted by the user in settings): moving songs into playlist
+         folders without a confirmation for each file. -->
+    <uses-permission android:name="android.permission.MANAGE_MEDIA" />
+    <!-- Media management only skips the confirmation of a *write* (a move) if the app also holds this
+         one (MediaProvider's PermissionActivity.shouldShowActionDialog). -->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <!-- Background playback. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
