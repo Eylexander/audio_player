@@ -33,7 +33,14 @@ Release is signed with the release key in `.secrets/` (git-ignored: `release.p12
 `fingerprint.txt`; SHA-256 `db171ead795079f5e07d32cdc553f7eae42e60f4b29d0385c423eb6937837199`). CI gets it from the
 `RELEASE_KEYSTORE_BASE64` / `RELEASE_KEYSTORE_PASS` secrets. **Never regenerate or lose it**: phones only accept
 updates signed with the same key (the app is distributed through the F-Droid repo in `../fdroid`). Without the key,
-release builds fall back to the debug key. A plain `--release` makes a 48 MB "fat" APK carrying
+release builds fall back to the debug key.
+
+Releasing: push a `v*` tag; `.github/workflows/release.yml` builds and publishes a GitHub release (version name from
+the tag, versionCode = run number), and the F-Droid repo in `../fdroid` picks it up. The workflow fails a tag build if
+the key secrets are missing. v1.0.0 and v1.1.0 were signed with throwaway keys and are being replaced by v1.1.1, the
+first release signed with this key (2026-10-08).
+
+A plain `--release` makes a 48 MB "fat" APK carrying
 the Flutter engine for three ABIs; only one is ever used. Flutter already runs R8 on release builds.
 
 Emulator: AVD `Medium_Phone_API_36.0` (x86_64). Start it with `$LOCALAPPDATA/Android/Sdk/emulator/emulator.exe -avd Medium_Phone_API_36.0`.
