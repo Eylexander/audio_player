@@ -55,6 +55,16 @@
                 <action android:name="androidx.media3.session.MediaSessionService"/>
             </intent-filter>
         </service>
+        <!-- Shares a copy of a song under its real file name (see AudioLibrary.shareCopy). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/shared_files" />
+        </provider>
         <!-- Run Dart on its own thread instead of Android's main thread (the default since Flutter
              3.29). Merged threads caused "app not responding" when another screen (e.g. the file
              picker) covered the app: Android's main thread blocked while Flutter released its surface. -->

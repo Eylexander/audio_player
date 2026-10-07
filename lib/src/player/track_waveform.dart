@@ -5,14 +5,21 @@ import 'package:flutter/material.dart';
 
 import '../formatting.dart';
 import '../native_bridge.dart';
+import 'player_controller.dart';
 
 /// Loudness overview of the playing track, drawn as the now-playing seek bar. It's decoded
-/// natively in its own slot (the cutter's waveform is never interrupted), only while the
-/// now-playing screen is open, and kept for the last few tracks.
+/// natively in its own slot (the cutter's waveform is never interrupted) in the background as
+/// soon as a track starts, so it's ready when the now-playing screen opens. The last few tracks
+/// are kept.
 class TrackWaveforms {
   TrackWaveforms._() {
     NativeBridge.events.listen(_onEvent);
+    PlayerController.instance.addListener(_follow);
+    _follow();
   }
+
+  /// Starts following the player. Called once at startup.
+  static void init() => instance;
 
   static final instance = TrackWaveforms._();
 
@@ -30,7 +37,14 @@ class TrackWaveforms {
   /// Negative, so it can never match one of the editor's tokens. 0 when nothing is decoding.
   int _token = 0;
 
-  void show(String uri, int durationMs) {
+  void _follow() {
+    final s = PlayerController.instance.state;
+    final uri = s.uri;
+    final duration = s.durationMs ?? 0;
+    if (uri != null && duration > 0) _show(uri, duration);
+  }
+
+  void _show(String uri, int durationMs) {
     if (uri == _uri) return;
     _uri = uri;
     final cached = _cache.remove(uri);
@@ -45,13 +59,6 @@ class TrackWaveforms {
     _token = --_lastToken;
     NativeBridge.startWaveform(uri, durationMs: durationMs, token: _token, buckets: _buckets, slot: 'player')
         .catchError((_) {});
-  }
-
-  /// The now-playing screen closed.
-  void stop() {
-    if (_token != 0) NativeBridge.cancelWaveform(slot: 'player').catchError((_) {});
-    _token = 0;
-    _uri = null;
   }
 
   void _onEvent(NativeEvent event) {

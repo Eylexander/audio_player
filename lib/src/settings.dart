@@ -17,6 +17,9 @@ class Settings extends ChangeNotifier {
   /// Playlists as a grid of covers (true) or a list.
   bool playlistGrid = true;
 
+  /// Each playlist gets a folder (Music/Playlists/(name)) holding copies of its songs.
+  bool playlistFolders = true;
+
   /// Called before the first frame, so a saved dark theme doesn't start out light.
   Future<void> load() async {
     try {
@@ -24,6 +27,7 @@ class Settings extends ChangeNotifier {
       themeMode = ThemeMode.values.asNameMap()[prefs['theme']] ?? ThemeMode.system;
       pureBlack = prefs['pureBlack'] == 'true';
       playlistGrid = prefs['playlistView'] != 'list';
+      playlistFolders = prefs['playlistFolders'] != 'false';
     } catch (_) {
       // Keep the defaults.
     }
@@ -46,6 +50,12 @@ class Settings extends ChangeNotifier {
     if (value == playlistGrid) return;
     playlistGrid = value;
     _save('playlistView', value ? 'grid' : 'list');
+  }
+
+  void setPlaylistFolders(bool value) {
+    if (value == playlistFolders) return;
+    playlistFolders = value;
+    _save('playlistFolders', '$value');
   }
 
   void _save(String key, String value) {
@@ -117,7 +127,16 @@ class _SettingsSheet extends StatelessWidget {
                   onSelectionChanged: (value) => settings.setPlaylistGrid(value.first),
                 ),
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('A folder for each playlist'),
+                subtitle: const Text('Copies a playlist’s songs into Music/Playlists/<name>, so they’re organized '
+                    'by folder too. The copies take extra space.'),
+                value: settings.playlistFolders,
+                onChanged: settings.setPlaylistFolders,
+              ),
+              const SizedBox(height: 20),
               const Divider(),
               const SizedBox(height: 16),
               Text('Audio Cutter', style: theme.textTheme.titleSmall),

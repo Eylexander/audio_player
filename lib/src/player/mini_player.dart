@@ -4,6 +4,7 @@ import '../artwork.dart';
 import '../native_bridge.dart';
 import 'now_playing_page.dart';
 import 'player_controller.dart';
+import 'swipe_to_skip.dart';
 import 'track_colors.dart';
 
 /// Floating card at the bottom of the screens while something is loaded in the player, in the
@@ -53,15 +54,8 @@ class _MiniPlayerCard extends StatelessWidget {
     final progress = duration > 0 ? (s.positionMs / duration).clamp(0.0, 1.0) : 0.0;
     final foreground = colors.onPrimaryContainer;
 
+    final hasNext = s.index < s.count - 1 || s.repeat != RepeatMode.off;
     return GestureDetector(
-      onHorizontalDragEnd: (d) {
-        final velocity = d.primaryVelocity ?? 0;
-        if (velocity < -300) {
-          player.next();
-        } else if (velocity > 300) {
-          player.previous();
-        }
-      },
       onVerticalDragEnd: (d) {
         if ((d.primaryVelocity ?? 0) < -300) openNowPlaying(context);
       },
@@ -77,26 +71,38 @@ class _MiniPlayerCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
             child: Row(
               children: [
-                Hero(tag: 'now-playing-art', child: Artwork(uri: s.uri, size: 48, radius: 14)),
-                const SizedBox(width: 12),
+                // The song (cover and names) slides when swiped; the buttons stay put.
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        s.title ?? '',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall?.copyWith(color: foreground),
-                      ),
-                      Text(
-                        s.artist ?? 'Unknown artist',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(color: foreground.withValues(alpha: 0.75)),
-                      ),
-                    ],
+                  child: SwipeToSkip(
+                    uri: s.uri,
+                    index: s.index,
+                    hasNext: hasNext,
+                    child: Row(
+                      children: [
+                        Hero(tag: 'now-playing-art', child: Artwork(uri: s.uri, size: 48, radius: 14)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                s.title ?? '',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleSmall?.copyWith(color: foreground),
+                              ),
+                              Text(
+                                s.artist ?? 'Unknown artist',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodySmall?.copyWith(color: foreground.withValues(alpha: 0.75)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 SizedBox.square(
@@ -126,7 +132,7 @@ class _MiniPlayerCard extends StatelessWidget {
                 IconButton(
                   tooltip: 'Next',
                   color: foreground,
-                  onPressed: s.index < s.count - 1 || s.repeat != RepeatMode.off ? player.next : null,
+                  onPressed: hasNext ? player.next : null,
                   icon: const Icon(Icons.skip_next_rounded),
                 ),
               ],

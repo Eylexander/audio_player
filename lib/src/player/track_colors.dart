@@ -6,6 +6,9 @@ import '../theme.dart';
 /// Themes taken from a track's cover art, or from the hue of its generated cover when it has
 /// none. Used by the player and the playlist page so they take on the colors of their music.
 abstract final class TrackColors {
+  /// Prefix of a "uri" that stands for a generated cover's seed (a playlist's chosen cover).
+  static const generated = 'generated:';
+
   static final _cache = <String, Future<ThemeData>>{};
   static const _maxEntries = 60;
 
@@ -22,7 +25,7 @@ abstract final class TrackColors {
     final covers = base.extension<CoverPalette>()!;
     final brightness = base.brightness;
     ColorScheme? scheme;
-    final bytes = await Artwork.load(uri, 160);
+    final bytes = uri.startsWith(generated) ? null : await Artwork.load(uri, 160);
     if (bytes != null) {
       try {
         scheme = await ColorScheme.fromImageProvider(provider: MemoryImage(bytes), brightness: brightness);
@@ -30,7 +33,8 @@ abstract final class TrackColors {
         // Undecodable image: fall back to the generated cover's color.
       }
     }
-    scheme ??= ColorScheme.fromSeed(seedColor: covers.pick(stableHash(uri)).$1, brightness: brightness);
+    final seed = uri.startsWith(generated) ? uri.substring(generated.length) : uri;
+    scheme ??= ColorScheme.fromSeed(seedColor: covers.pick(stableHash(seed)).$1, brightness: brightness);
     if (black) scheme = AppTheme.blacken(scheme);
     return AppTheme.build(scheme, covers: covers);
   }

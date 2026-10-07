@@ -26,8 +26,11 @@ export JAVA_HOME=~/.jdks/jbr-21.0.9
 flutter analyze
 flutter test                      # test/formatting_test.dart
 flutter build apk --debug         # build/app/outputs/flutter-apk/app-debug.apk
-flutter build apk --release       # release is signed with the debug key so it installs directly
+flutter build apk --release --split-per-abi   # one APK per ABI; the phone needs app-arm64-v8a-release.apk (~18 MB)
 ```
+
+Release is signed with the debug key so it installs directly. A plain `--release` makes a 48 MB "fat" APK carrying
+the Flutter engine for three ABIs; only one is ever used. Flutter already runs R8 on release builds.
 
 Emulator: AVD `Medium_Phone_API_36.0` (x86_64). Start it with `$LOCALAPPDATA/Android/Sdk/emulator/emulator.exe -avd Medium_Phone_API_36.0`.
 adb lives at `$LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe`.
@@ -78,8 +81,15 @@ adb lives at `$LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe`.
   (`ColorScheme.fromImageProvider`) or from the generated cover's hue, and animates between tracks. Used by the
   mini player, the now-playing screen and the playlist page (first song).
 - Now-playing seek bar is the track's **real waveform**, decoded natively in the `player` waveform slot (the
-  editor uses the `editor` slot, so they never cancel each other), only while that screen is open, 240 buckets,
-  cached for 40 tracks. Its tokens are negative to never match the editor's.
+  editor uses the `editor` slot, so they never cancel each other), 240 buckets, cached for 40 tracks. Its tokens
+  are negative to never match the editor's. `TrackWaveforms` follows the player from startup and decodes each new
+  track in the background, so the waveform is ready when the screen opens.
+- Swiping the mini player's song (or the now-playing cover) sideways skips with a slide (`SwipeToSkip`); song
+  changes from buttons or the notification slide in too.
+- Launcher icon: a play triangle drawn as waveform bars, on an indigo gradient (`ic_launcher_background.xml`).
+- Generated covers have styles (`CoverStyle`: bars, waves, rings, halftone, sunset, shapes). Bars is the default
+  for songs; a playlist can pick any of them as its cover (`cover: "waves:<seed>"` in the JSON), and its page is
+  then themed from that cover's hue (`TrackColors.generated` prefix).
 - Pages put the mini player in `bottomNavigationBar` with `extendBody: true`; `HeaderScrollView` pads its end by
   `MediaQuery.paddingOf(context).bottom`. `MiniPlayer` keeps the system bar's height even when hidden.
 - Theme setting: Flutter `ThemeMode`, plus `UiModeManager.setApplicationNightMode` on Android 12+ so the splash
@@ -124,6 +134,9 @@ These rules come from the user's "always best quality" requirement:
   was closing at that moment: a Scaffold stays registered with the messenger until it's disposed. Found with
   `adb shell monkey -p com.eylexander.audio_cutter --pct-syskeys 5 --pct-appswitch 0 --pct-anyevent 0 --throttle 30 -s 42 3000`
   (back up `Download/`, `Music/AudioCutter/` and `playlists.json` first: monkey can tap Delete).
+- Sharing a MediaStore uri made receiving apps name the file after the uri's last segment (a number). `shareFile`
+  now copies it to `cache/shared/<real name>` and shares that through a `FileProvider`, and excludes the app
+  itself from the chooser.
 - A Scaffold's `bottomNavigationBar` is **not** lifted above the keyboard. Screens with a search field and a bottom
   button (the song picker) pad the bar by `MediaQuery.viewInsetsOf(context).bottom`.
 
@@ -142,7 +155,14 @@ These rules come from the user's "always best quality" requirement:
 - Each entry keeps `uri`, `title`, `displayName` and `sizeBytes`. If the URI no longer matches a library track, the
   entry is matched again by `displayName|sizeBytes`. Entries that still don't match count as "missing", and the page
   offers "Remove missing songs".
-- Duplicate songs are skipped when adding.
+- Duplicate songs are skipped when adding (by uri, and by `displayName|sizeBytes`, so a folder copy counts too).
+- Long-press the playlist page's title to rename; tap its cover to change it.
+- **Playlist folders** (setting "A folder for each playlist", on by default): adding songs copies them byte for byte
+  into `Music/Playlists/<name>/` (MediaStore insert, app-owned). Entries keep pointing at the originals; the copies
+  share name and size, so the `displayName|sizeBytes` fallback finds them if an original goes away. Renaming moves
+  the files (the old empty directory stays: MediaStore can't delete directories). Removing a song deletes its copy
+  only if the original still exists. Deleting a playlist keeps the folder. Older playlists get a folder through
+  "Copy songs to its folder" in the page menu.
 - M3U import (`importM3u`): lines are matched to library tracks by file name, preferring a track whose
   `folder/displayName` is a suffix of the line. This is meant for playlists exported from Fossify Music Player.
 - Songs can be added from: the song picker on the playlist page, any track's menu ("Add to playlist…"), the
@@ -195,6 +215,13 @@ Verified on the API 36 emulator:
 - On a fresh emulator boot, the debug build takes ~10 s before its first frame. Wait before tapping.
 - Debug and release are signed with the same key, so `adb install -r` switches between them and keeps app data.
   `run-as` (to read `files/playlists.json`) only works with the debug build.
+
+## 2026-10-07 (evening)
+
+Verified on the emulator (release, x86_64): cover picker and themed page, long-press rename, folder copies
+(sizes identical), rename moving the folder, copy deleted on removal, share showing the real file name, swipe on
+the mini player and on the now-playing cover, waveform already drawn when opening now playing. Not checked:
+the new launcher icon on a real launcher with themed icons, sharing into a specific app (Telegram, Discord…).
 
 ## Possible next steps
 

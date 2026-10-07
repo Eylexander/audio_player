@@ -116,6 +116,95 @@ class AudioLibrary(context: Context) {
     }
 
     /**
+     * Copies each of [uris] into the folder [relativePath] (e.g. "Music/Playlists/Road trip"), byte
+     * for byte so the copy keeps the original's name and size. Files already there (same name and
+     * size) are skipped. Returns how many files were copied.
+     */
+    fun copyToFolder(uris: List<Uri>, relativePath: String): Int {
+        val folder = "$relativePath/"
+        val present = mutableSetOf<String>()
+        resolver.query(
+            collection,
+            arrayOf(MediaStore.Audio.Media.DISPLAY_NAME, MediaStore.Audio.Media.SIZE),
+            "${MediaStore.Audio.Media.RELATIVE_PATH} = ?",
+            arrayOf(folder),
+            null,
+        )?.use { c -> while (c.moveToNext()) present += "${c.getString(0)}|${c.getLong(1)}" }
+
+        var copied = 0
+        for (uri in uris) {
+            val (name, size) = resolver.query(uri, arrayOf(MediaStore.Audio.Media.DISPLAY_NAME, MediaStore.Audio.Media.SIZE), null, null, null)
+                ?.use { if (it.moveToFirst()) it.getString(0) to it.getLong(1) else null } ?: continue
+            if (name.isNullOrEmpty() || !present.add("$name|$size")) continue
+            val values = ContentValues().apply {
+                // No MIME type, as in save(): it keeps the file name intact.
+                put(MediaStore.Audio.Media.DISPLAY_NAME, name)
+                put(MediaStore.Audio.Media.RELATIVE_PATH, folder)
+                put(MediaStore.Audio.Media.IS_PENDING, 1)
+            }
+            val target = resolver.insert(collection, values) ?: continue
+            try {
+                val input = resolver.openInputStream(uri) ?: throw IOException("Couldn't read $name")
+                input.use { inp -> resolver.openOutputStream(target)!!.use { inp.copyTo(it) } }
+                resolver.update(target, ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }, null, null)
+                copied++
+            } catch (_: Exception) {
+                runCatching { resolver.delete(target, null, null) }
+            }
+        }
+        return copied
+    }
+
+    /** Moves this app's files from the folder [from] to [to]. Files it doesn't own stay where they are. */
+    fun renameFolder(from: String, to: String) {
+        val moved = ContentValues().apply { put(MediaStore.Audio.Media.RELATIVE_PATH, "$to/") }
+        for (uri in filesIn(from)) {
+            try {
+                resolver.update(uri, moved, null, null)
+            } catch (_: SecurityException) {
+                // Not ours (e.g. created before a reinstall): leave it.
+            }
+        }
+    }
+
+    /** Deletes the file [displayName] from [relativePath] if this app owns it, without asking. */
+    fun deleteFromFolder(relativePath: String, displayName: String): Boolean = filesIn(relativePath, displayName).any { uri ->
+        try {
+            resolver.delete(uri, null, null) > 0
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
+    private fun filesIn(relativePath: String, displayName: String? = null): List<Uri> {
+        val selection = "${MediaStore.Audio.Media.RELATIVE_PATH} = ?" +
+            if (displayName != null) " AND ${MediaStore.Audio.Media.DISPLAY_NAME} = ?" else ""
+        val args = listOfNotNull("$relativePath/", displayName).toTypedArray()
+        val uris = mutableListOf<Uri>()
+        resolver.query(collection, arrayOf(MediaStore.Audio.Media._ID), selection, args, null)?.use { c ->
+            while (c.moveToNext()) uris += ContentUris.withAppendedId(collection, c.getLong(0))
+        }
+        return uris
+    }
+
+    /**
+     * A copy of [uri] under its real file name in [dir], for sharing. Many apps name a received file
+     * after the last segment of its uri, which for MediaStore is a bare number.
+     */
+    fun shareCopy(uri: Uri, dir: File): File {
+        val name = resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null }
+            ?.replace('/', '_')
+            ?.takeIf { it.isNotBlank() } ?: "audio"
+        dir.deleteRecursively() // Only the last shared file is kept.
+        dir.mkdirs()
+        val file = File(dir, name)
+        val input = resolver.openInputStream(uri) ?: throw IOException("Couldn't read the file")
+        input.use { inp -> file.outputStream().use { inp.copyTo(it) } }
+        return file
+    }
+
+    /**
      * Deletes [uri]. Returns null when done, or an [IntentSender] asking the user for confirmation
      * when the file doesn't belong to this app.
      */

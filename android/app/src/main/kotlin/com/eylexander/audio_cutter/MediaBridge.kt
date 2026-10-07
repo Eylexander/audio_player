@@ -2,6 +2,8 @@ package com.eylexander.audio_cutter
 
 import android.Manifest
 import android.app.UiModeManager
+import android.content.ClipData
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,6 +16,7 @@ import android.provider.Settings
 import android.view.WindowManager
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.content.IntentCompat
 import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
@@ -223,14 +226,37 @@ class MediaBridge(
                 }
             }
 
-            "shareFile" -> {
-                val uri = call.argument<String>("uri")!!.toUri()
-                val send = Intent(Intent.ACTION_SEND)
-                    .setType(context.contentResolver.getType(uri) ?: "audio/*")
-                    .putExtra(Intent.EXTRA_STREAM, uri)
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                activity.startActivity(Intent.createChooser(send, null))
-                result.success(null)
+            "shareFile" -> scope.launch {
+                try {
+                    val uri = call.argument<String>("uri")!!.toUri()
+                    val type = context.contentResolver.getType(uri) ?: "audio/*"
+                    // Shared as a named copy: receiving apps then keep the real file name.
+                    val file = withContext(Dispatchers.IO) { library.shareCopy(uri, File(context.cacheDir, "shared")) }
+                    val shared = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+                    val send = Intent(Intent.ACTION_SEND)
+                        .setType(type)
+                        .putExtra(Intent.EXTRA_STREAM, shared)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    send.clipData = ClipData.newUri(context.contentResolver, file.name, shared)
+                    val chooser = Intent.createChooser(send, null)
+                        // Sharing to ourselves would just open the cutter.
+                        .putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(ComponentName(context, MainActivity::class.java)))
+                    activity.startActivity(chooser)
+                    result.success(null)
+                } catch (e: Exception) {
+                    result.error("share_failed", e.message, null)
+                }
+            }
+
+            "copyToFolder" -> io(result) {
+                library.copyToFolder(call.argument<List<String>>("uris")!!.map { it.toUri() }, call.argument<String>("folder")!!)
+            }
+            "renameFolder" -> io(result) {
+                library.renameFolder(call.argument<String>("from")!!, call.argument<String>("to")!!)
+                null
+            }
+            "deleteFromFolder" -> io(result) {
+                library.deleteFromFolder(call.argument<String>("folder")!!, call.argument<String>("name")!!)
             }
 
             "probe" -> io(result, errorCode = "read_failed") {

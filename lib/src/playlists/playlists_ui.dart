@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../artwork.dart';
@@ -117,7 +119,10 @@ Future<bool> deletePlaylist(BuildContext context, Playlist playlist) async {
       return AlertDialog(
         icon: Icon(Icons.delete_outline_rounded, color: colors.error),
         title: const Text('Delete playlist?'),
-        content: Text('“${playlist.name}” will be deleted. The songs themselves stay on your device.'),
+        content: Text(
+          '“${playlist.name}” will be deleted. The songs themselves stay on your device'
+          '${playlist.folder != null ? ', and so does its folder (${playlist.folder})' : ''}.',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           FilledButton(
@@ -133,8 +138,8 @@ Future<bool> deletePlaylist(BuildContext context, Playlist playlist) async {
   return confirmed == true;
 }
 
-/// A mosaic of the first four songs' covers, the first song's cover for shorter playlists, or a
-/// generated cover for an empty one.
+/// The cover the user picked, else a mosaic of the first four songs' covers, the first song's
+/// cover for shorter playlists, or a generated cover for an empty one.
 class PlaylistCover extends StatelessWidget {
   const PlaylistCover({super.key, required this.playlist, required this.size, this.radius = 16});
 
@@ -145,8 +150,11 @@ class PlaylistCover extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tracks = PlaylistStore.instance.resolve(playlist).tracks;
+    final design = CoverDesign.decode(playlist.cover);
     final Widget content;
-    if (tracks.length >= 4) {
+    if (design != null) {
+      content = GeneratedCover.design(design);
+    } else if (tracks.length >= 4) {
       final half = size / 2;
       Widget tile(int i) => Artwork(uri: tracks[i].uri, size: half, radius: 0);
       content = Column(
@@ -167,7 +175,7 @@ class PlaylistCover extends StatelessWidget {
   }
 }
 
-enum _PlaylistAction { play, shuffle, rename, delete }
+enum _PlaylistAction { play, shuffle, rename, cover, delete }
 
 /// Bottom sheet with the actions on a whole playlist.
 Future<void> showPlaylistActions(BuildContext context, Playlist playlist) async {
@@ -220,6 +228,7 @@ Future<void> showPlaylistActions(BuildContext context, Playlist playlist) async 
               item(Icons.play_arrow_rounded, 'Play', _PlaylistAction.play, enabled: !empty),
               item(Icons.shuffle_rounded, 'Shuffle', _PlaylistAction.shuffle, enabled: !empty),
               item(Icons.edit_rounded, 'Rename', _PlaylistAction.rename),
+              item(Icons.palette_outlined, 'Change cover', _PlaylistAction.cover),
               item(Icons.delete_outline_rounded, 'Delete playlist', _PlaylistAction.delete, destructive: true),
               const SizedBox(height: 8),
             ],
@@ -236,6 +245,8 @@ Future<void> showPlaylistActions(BuildContext context, Playlist playlist) async 
       await PlayerController.instance.shuffleAll(resolved.tracks);
     case _PlaylistAction.rename:
       await renamePlaylist(context, playlist);
+    case _PlaylistAction.cover:
+      await showCoverPicker(context, playlist);
     case _PlaylistAction.delete:
       await deletePlaylist(context, playlist);
   }
@@ -246,3 +257,130 @@ String playlistDetails(ResolvedPlaylist resolved) => [
       songCount(resolved.tracks.length),
       if (resolved.tracks.isNotEmpty) formatTotalDuration(resolved.durationMs),
     ].join(' · ');
+
+/// Bottom sheet to give a playlist a generated cover, or go back to its songs' covers.
+Future<void> showCoverPicker(BuildContext context, Playlist playlist) => showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _CoverPicker(playlist: playlist),
+    );
+
+class _CoverPicker extends StatefulWidget {
+  const _CoverPicker({required this.playlist});
+
+  final Playlist playlist;
+
+  @override
+  State<_CoverPicker> createState() => _CoverPickerState();
+}
+
+class _CoverPickerState extends State<_CoverPicker> {
+  final _random = math.Random();
+  late List<CoverDesign> _designs = _roll();
+
+  /// Every style twice, each with its own colors.
+  List<CoverDesign> _roll() => [
+        for (var round = 0; round < 2; round++)
+          for (final style in CoverStyle.values) CoverDesign(style, _random.nextInt(1 << 30).toString()),
+      ];
+
+  void _pick(String? cover) {
+    PlaylistStore.instance.setCover(widget.playlist, cover);
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final playlist = widget.playlist;
+    final current = CoverDesign.decode(playlist.cover);
+    // The current design stays first, so it can be kept while rolling new ones.
+    final designs = [if (current != null) current, ..._designs.where((d) => d != current).take(current == null ? 12 : 11)];
+
+    Widget option({required Widget child, required bool selected, required VoidCallback onTap, required String label}) =>
+        Semantics(
+          button: true,
+          selected: selected,
+          label: label,
+          child: GestureDetector(
+            onTap: onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: selected ? colors.primary : Colors.transparent, width: 3),
+              ),
+              child: ClipRRect(borderRadius: BorderRadius.circular(15), child: child),
+            ),
+          ),
+        );
+
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text('Cover', style: theme.textTheme.headlineSmall)),
+                TextButton.icon(
+                  onPressed: () => setState(() => _designs = _roll()),
+                  icon: const Icon(Icons.casino_outlined),
+                  label: const Text('Shuffle'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            option(
+              selected: current == null,
+              label: 'Song covers',
+              onTap: () => _pick(null),
+              child: Container(
+                color: colors.surfaceContainerHigh,
+                padding: const EdgeInsets.all(10),
+                child: Row(
+                  children: [
+                    PlaylistCover(playlist: Playlist(id: playlist.id, name: '', entries: playlist.entries), size: 56, radius: 12),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Song covers', style: theme.textTheme.titleSmall),
+                          Text(
+                            'Made from the first songs’ cover art',
+                            style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            GridView.count(
+              crossAxisCount: 4,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 4,
+              crossAxisSpacing: 4,
+              children: [
+                for (final design in designs)
+                  option(
+                    selected: design == current,
+                    label: '${design.style.name} cover',
+                    onTap: () => _pick(design.encode()),
+                    child: GeneratedCover.design(design),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

@@ -6,6 +6,7 @@ import '../native_bridge.dart';
 import '../playlists/playlists_ui.dart';
 import '../ui/playing_bars.dart';
 import 'player_controller.dart';
+import 'swipe_to_skip.dart';
 import 'track_colors.dart';
 import 'track_waveform.dart';
 
@@ -35,27 +36,6 @@ class NowPlayingPage extends StatefulWidget {
 class _NowPlayingPageState extends State<NowPlayingPage> {
   final _player = PlayerController.instance;
   final _waveforms = TrackWaveforms.instance;
-
-  @override
-  void initState() {
-    super.initState();
-    _player.addListener(_syncWaveform);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _syncWaveform());
-  }
-
-  @override
-  void dispose() {
-    _player.removeListener(_syncWaveform);
-    _waveforms.stop();
-    super.dispose();
-  }
-
-  void _syncWaveform() {
-    final s = _player.state;
-    final uri = s.uri;
-    final duration = s.durationMs ?? 0;
-    if (uri != null && duration > 0) _waveforms.show(uri, duration);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -127,21 +107,27 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
                       children: [
                         Expanded(
                           child: Center(
-                            child: LayoutBuilder(
-                              builder: (context, constraints) => DecoratedBox(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(32),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(alpha: 0.28),
-                                      blurRadius: 36,
-                                      offset: const Offset(0, 18),
-                                    ),
-                                  ],
-                                ),
-                                child: Hero(
-                                  tag: 'now-playing-art',
-                                  child: Artwork(uri: uri, size: constraints.biggest.shortestSide, radius: 32),
+                            // Swipe the cover sideways to skip.
+                            child: SwipeToSkip(
+                              uri: uri,
+                              index: s.index,
+                              hasNext: s.index < s.count - 1 || s.repeat != RepeatMode.off,
+                              child: LayoutBuilder(
+                                builder: (context, constraints) => DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(32),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.28),
+                                        blurRadius: 36,
+                                        offset: const Offset(0, 18),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Hero(
+                                    tag: 'now-playing-art',
+                                    child: Artwork(uri: uri, size: constraints.biggest.shortestSide, radius: 32),
+                                  ),
                                 ),
                               ),
                             ),

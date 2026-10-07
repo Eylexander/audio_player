@@ -288,6 +288,19 @@ class NativeBridge {
 
   static Future<void> shareFile(String uri) => _methods.invokeMethod('shareFile', {'uri': uri});
 
+  /// Copies songs into a folder such as "Music/Playlists/Road trip", skipping those already there.
+  /// Returns how many were copied.
+  static Future<int> copyToFolder(List<String> uris, String folder) async =>
+      await _methods.invokeMethod<int>('copyToFolder', {'uris': uris, 'folder': folder}) ?? 0;
+
+  /// Moves the app's own files from one folder to another.
+  static Future<void> renameFolder(String from, String to) =>
+      _methods.invokeMethod('renameFolder', {'from': from, 'to': to});
+
+  /// Deletes a file the app created in [folder]. Returns false if it wasn't there or isn't the app's.
+  static Future<bool> deleteFromFolder(String folder, String name) async =>
+      await _methods.invokeMethod<bool>('deleteFromFolder', {'folder': folder, 'name': name}) ?? false;
+
   // Cutter
 
   static Future<MediaInfo> probe(String uri) async {

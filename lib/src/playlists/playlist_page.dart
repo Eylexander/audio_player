@@ -9,7 +9,9 @@ import '../native_bridge.dart';
 import '../player/mini_player.dart';
 import '../player/player_controller.dart';
 import '../player/track_colors.dart';
+import '../settings.dart';
 import '../ui/common.dart';
+import '../ui/generated_cover.dart';
 import '../ui/header_scroll_view.dart';
 import 'playlist_store.dart';
 import 'playlists_ui.dart';
@@ -18,7 +20,7 @@ void openPlaylist(BuildContext context, Playlist playlist) {
   Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => PlaylistPage(playlist: playlist)));
 }
 
-enum _PageAction { rename, removeMissing, delete }
+enum _PageAction { rename, cover, copyToFolder, removeMissing, delete }
 
 /// One playlist: play, shuffle, add, remove and reorder songs. The page takes on the colors of
 /// its first song's cover.
@@ -38,6 +40,19 @@ class PlaylistPage extends StatelessWidget {
     showSnack(ScaffoldMessenger.of(context), 'Added ${songCount(added)}');
   }
 
+  Future<void> _copyToFolder(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final copied = await PlaylistStore.instance.syncFolder(playlist, force: true);
+      showSnack(
+        messenger,
+        copied == 0 ? 'Every song is already in ${playlist.folder}' : 'Copied ${songCount(copied)} to ${playlist.folder}',
+      );
+    } catch (_) {
+      showSnack(messenger, "Couldn't copy the songs.");
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = PlaylistStore.instance;
@@ -46,8 +61,9 @@ class PlaylistPage extends StatelessWidget {
       builder: (context, _) {
         final resolved = store.resolve(playlist);
         final tracks = resolved.tracks;
+        final design = CoverDesign.decode(playlist.cover);
         return TrackThemed(
-          uri: tracks.firstOrNull?.uri,
+          uri: design != null ? '${TrackColors.generated}${design.seed}' : tracks.firstOrNull?.uri,
           child: Builder(
             builder: (context) {
               final theme = Theme.of(context);
@@ -89,6 +105,10 @@ class PlaylistPage extends StatelessWidget {
                             switch (action) {
                               case _PageAction.rename:
                                 await renamePlaylist(context, playlist);
+                              case _PageAction.cover:
+                                await showCoverPicker(context, playlist);
+                              case _PageAction.copyToFolder:
+                                await _copyToFolder(context);
                               case _PageAction.removeMissing:
                                 store.removeMissing(playlist);
                               case _PageAction.delete:
@@ -97,6 +117,9 @@ class PlaylistPage extends StatelessWidget {
                           },
                           itemBuilder: (context) => [
                             const PopupMenuItem(value: _PageAction.rename, child: Text('Rename')),
+                            const PopupMenuItem(value: _PageAction.cover, child: Text('Change cover')),
+                            if (tracks.isNotEmpty && (Settings.instance.playlistFolders || playlist.folder != null))
+                              const PopupMenuItem(value: _PageAction.copyToFolder, child: Text('Copy songs to its folder')),
                             if (resolved.missing > 0)
                               const PopupMenuItem(value: _PageAction.removeMissing, child: Text('Remove missing songs')),
                             const PopupMenuItem(value: _PageAction.delete, child: Text('Delete playlist')),
@@ -118,15 +141,32 @@ class PlaylistPage extends StatelessWidget {
                                   ),
                                 ],
                               ),
-                              child: PlaylistCover(playlist: playlist, size: _coverSize, radius: 28),
+                              child: Semantics(
+                                button: true,
+                                label: 'Change cover',
+                                child: GestureDetector(
+                                  onTap: () => showCoverPicker(context, playlist),
+                                  child: PlaylistCover(playlist: playlist, size: _coverSize, radius: 28),
+                                ),
+                              ),
                             ),
                             const SizedBox(height: 20),
-                            Text(
-                              playlist.name,
-                              textAlign: TextAlign.center,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.headlineMedium?.copyWith(color: colors.onSurface),
+                            // Long-press the name to rename the playlist.
+                            Semantics(
+                              onLongPressHint: 'Rename',
+                              child: GestureDetector(
+                                onLongPress: () {
+                                  Feedback.forLongPress(context);
+                                  renamePlaylist(context, playlist);
+                                },
+                                child: Text(
+                                  playlist.name,
+                                  textAlign: TextAlign.center,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.headlineMedium?.copyWith(color: colors.onSurface),
+                                ),
+                              ),
                             ),
                             const SizedBox(height: 4),
                             Text(
@@ -273,8 +313,9 @@ class _TrackPickerPageState extends State<TrackPickerPage> {
     final library = LibraryController.instance;
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    // By uri, and by name and size: a copy in the playlist's folder counts as the same song.
     final present = {
-      for (final e in widget.playlist.entries) e.uri,
+      for (final e in widget.playlist.entries) ...[e.uri, '${e.displayName}|${e.sizeBytes}'],
       for (final t in PlaylistStore.instance.resolve(widget.playlist).tracks) t.uri,
     };
     return Scaffold(
@@ -326,7 +367,7 @@ class _TrackPickerPageState extends State<TrackPickerPage> {
             itemCount: tracks.length,
             itemBuilder: (context, i) {
               final track = tracks[i];
-              final already = present.contains(track.uri);
+              final already = present.contains(track.uri) || present.contains('${track.displayName}|${track.sizeBytes}');
               final checked = already || _selected.containsKey(track.uri);
               return CheckboxListTile(
                 value: checked,

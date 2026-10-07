@@ -11,6 +11,7 @@ import 'native_bridge.dart';
 import 'player/mini_player.dart';
 import 'player/now_playing_page.dart';
 import 'player/player_controller.dart';
+import 'player/track_waveform.dart';
 import 'playlists/playlist_store.dart';
 import 'playlists/playlists_tab.dart';
 import 'search_page.dart';
@@ -52,6 +53,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     });
     LibraryController.instance.load();
     PlaylistStore.instance.load();
+    TrackWaveforms.init();
     _handleIncoming();
   }
 
