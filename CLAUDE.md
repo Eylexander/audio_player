@@ -36,12 +36,15 @@ updates signed with the same key (the app is distributed through the F-Droid rep
 release builds fall back to the debug key.
 
 Releasing: push a `v*` tag; `.github/workflows/release.yml` builds and publishes a GitHub release (version name from
-the tag, versionCode = run number), and the F-Droid repo in `../fdroid` picks it up. The workflow fails a tag build if
+the tag, versionCode = run number, so keep the file's name), and the F-Droid repo in `../fdroid` picks it up. The
+build itself is `../fdroid/.github/workflows/flutter-apk.yml`, shared with LLLearner: `release.yml` only passes the APK
+name, the Flutter version and the key secrets. The store listing (en-US text and 512 px icon, rendered from
+`tool/icon.svg`) is in `../fdroid/metadata/com.eylexander.audio_cutter/`, not in this repo. The workflow fails a tag build if
 the key secrets are missing. v1.0.0 and v1.1.0 were signed with throwaway keys and are being replaced by v1.1.1, the
 first release signed with this key (2026-10-08).
 
 A plain `--release` makes a 48 MB "fat" APK carrying
-the Flutter engine for three ABIs; only one is ever used. The release workflow builds with
+the Flutter engine for three ABIs; only one is ever used. The shared release workflow builds with
 `--target-platform android-arm64` (~18 MB, versionCode unchanged; `--split-per-abi` would add an ABI offset to it),
 so published APKs don't install on x86_64 emulators. Flutter already runs R8 on release builds.
 

@@ -1,7 +1,9 @@
 name: Release APK
 
-# Push a tag like v1.2.0 to build the APK and publish it as a GitHub release.
-# "Run workflow" on the Actions tab builds it without publishing (the APK is attached to the run).
+# Push a tag like v1.2.0 to build the APK and publish it as a GitHub release; the F-Droid repo (Eylexander/fdroid)
+# picks it up. "Run workflow" on the Actions tab builds it without publishing (the APK is attached to the run).
+# The build is shared with the other apps of the F-Droid repo: Eylexander/fdroid/.github/workflows/flutter-apk.yml.
+# Keep this file's name: the versionCode is its run number.
 on:
   push:
     tags: ["v*"]
@@ -11,64 +13,11 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.32.7"
-          channel: stable
-          cache: true
-
-      # Every published APK must be signed with the same release key (.secrets/release.p12 on the
-      # dev PC), or phones refuse the update. A tag build fails rather than publish with another key.
-      - name: Restore signing key
-        env:
-          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
-          RELEASE_KEYSTORE_PASS: ${{ secrets.RELEASE_KEYSTORE_PASS }}
-        run: |
-          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$RELEASE_KEYSTORE_PASS" ]; then
-            echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
-            echo "RELEASE_KEYSTORE=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
-            echo "RELEASE_KEYSTORE_PASS=$RELEASE_KEYSTORE_PASS" >> "$GITHUB_ENV"
-          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            echo "::error::RELEASE_KEYSTORE_BASE64 / RELEASE_KEYSTORE_PASS are not set."
-            exit 1
-          else
-            echo "::warning::Release key secrets not set; the APK is signed with a throwaway debug key."
-          fi
-
-      - run: flutter pub get
-      - run: flutter analyze
-      - run: flutter test
-
-      # arm64 only (~18 MB): a plain --release APK carries the engine for three ABIs (~48 MB), and
-      # --split-per-abi would change the versionCode per ABI.
-      - name: Build APK
-        run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            flutter build apk --release --target-platform android-arm64 --build-name "${GITHUB_REF_NAME#v}" --build-number "$GITHUB_RUN_NUMBER"
-          else
-            flutter build apk --release --target-platform android-arm64 --build-number "$GITHUB_RUN_NUMBER"
-          fi
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk "dist/audio-cutter-${GITHUB_REF_NAME//\//-}-arm64.apk"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: audio-cutter-apk
-          path: dist/*.apk
-
-      - name: Publish release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*.apk
-          generate_release_notes: true
+  release:
+    uses: Eylexander/fdroid/.github/workflows/flutter-apk.yml@main
+    with:
+      apk-name: audio-cutter
+      flutter-version: "3.32.7"
+    secrets:
+      RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+      RELEASE_KEYSTORE_PASS: ${{ secrets.RELEASE_KEYSTORE_PASS }}

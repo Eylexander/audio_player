@@ -29,10 +29,13 @@ to the debug key.
 
 ## Releasing
 
-Push a `v*` tag (`git tag v1.2.0 && git push origin v1.2.0`). The "Release APK" workflow builds the APK, signed with
-the release key from the `RELEASE_KEYSTORE_BASE64` / `RELEASE_KEYSTORE_PASS` secrets, and publishes it as a GitHub
-release. The version name comes from the tag and the versionCode from the run number. The app is distributed through
-[Eylexander/fdroid](https://github.com/Eylexander/fdroid), which picks up new releases within 6 hours.
+Push a `v*` tag (`git tag v1.2.0 && git push origin v1.2.0`). The "Release APK" workflow runs the analyzer and the
+tests, builds the APK signed with the release key from the `RELEASE_KEYSTORE_BASE64` / `RELEASE_KEYSTORE_PASS`
+secrets, and publishes it as a GitHub release. The version name comes from the tag and the versionCode from the run
+number. The app is distributed through [Eylexander/fdroid](https://github.com/Eylexander/fdroid), which picks up new
+releases within 6 hours. The build steps are shared with the other apps of that repo
+([`flutter-apk.yml`](https://github.com/Eylexander/fdroid/blob/main/.github/workflows/flutter-apk.yml)), and so is
+the store listing (`metadata/com.eylexander.audio_cutter/`).
 
 The secrets hold `.secrets/release.p12.b64` and `.secrets/password.txt`. Every release must be signed with this same
 key, or phones refuse the update.
